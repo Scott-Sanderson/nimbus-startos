@@ -1,0 +1,10 @@
+{
+  "name": "nimbus-startos",
+  "dependencies": {
+    "@start9labs/start-sdk": "file:vendor/start-sdk-4.2.0-0.4.3-rc2.tgz"
+  },
+  "overrides": {
+    "@start9labs/start-sdk": "$@start9labs/start-sdk",
+    "fast-xml-parser": "5.12.1"
+  }
+}
