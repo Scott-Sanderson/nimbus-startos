@@ -32,7 +32,7 @@ Beacon API 5052 is bound without an exported interface, so it is reachable only 
 
 Nimbus runs with `--nat=none --enr-auto-update=true`: StartOS drops container UPnP/NAT-PMP, and automatic ENR updates let Nimbus discover and refresh its external IP from peers over whichever outbound gateway is active. Because `main.ts` does not `.const()` the outbound gateway or interface host, enabling/disabling gateways (e.g., switching between StartTunnel and local WAN) never forces intermediate restarts of Nimbus. Instead, the `Peer Network` health check subscribes reactively via `.onChange()` and `sdk.host.getAddressGateways()` to report gateway mismatches and live ENR advertisement status.
 
-Upgrades from legacy separate `consensus-peers` and `consensus-quic` hosts with adjacent ports retire those hosts in the `26.10.2:6` migration; non-adjacent installs keep their legacy interfaces until Settings is saved. Changing the peer port retires the previous range binding and resets its public address selection.
+Changing the peer port retires the previous range binding and resets its public address selection.
 
 ## Installation and First-Run Flow
 
