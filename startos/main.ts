@@ -12,6 +12,7 @@ import {
   adjacentPeerPorts,
   computeResourceBudget,
   formatStorageSize,
+  localDiskUsage,
   parseDfBytes,
   peerRangeStart,
   storageReady,
@@ -186,8 +187,11 @@ export const main = sdk.setupMain(async ({ effects }) =>
     const logTracker = new ConsensusLogTracker()
     const logHealth = new LogHealthMonitor()
     let lastLogStatus: 'clean' | 'warning' | 'failure' = 'clean'
+    let apiEverReady = false
+    let apiConsecutiveErrors = 0
     let syncConsecutiveErrors = 0
     let peersConsecutiveErrors = 0
+    let lastDiskUsage: { total: number; available: number } | null = null
     void logHealth.persist(Date.now(), true)
     const startedAt = Date.now()
     const command: [string, ...string[]] = [
@@ -285,11 +289,28 @@ export const main = sdk.setupMain(async ({ effects }) =>
           fn: async () => {
             try {
               await beacon('/eth/v1/node/version')
+              apiEverReady = true
+              apiConsecutiveErrors = 0
               return {
                 result: 'success',
                 message: i18n('Consensus API is ready'),
               }
             } catch {
+              apiConsecutiveErrors++
+              // Require real HTTP readiness on startup, but once ready tolerate
+              // a single transient timeout while port 5052 is still listening
+              // so a brief host I/O pause does not tear down dependent checks.
+              if (apiEverReady && apiConsecutiveErrors < 2) {
+                const listening = await sdk.healthCheck.checkPortListening(
+                  effects,
+                  BEACON_API_PORT,
+                  {
+                    successMessage: i18n('Consensus API is ready'),
+                    errorMessage: i18n('Waiting for the consensus API'),
+                  },
+                )
+                if (listening.result === 'success') return listening
+              }
               return {
                 result: 'failure',
                 message: i18n('Waiting for the consensus API'),
@@ -728,15 +749,24 @@ export const main = sdk.setupMain(async ({ effects }) =>
           display: i18n('Disk Space'),
           trigger: sdk.trigger.statusTrigger(300_000, {
             starting: 10_000,
+            loading: 15_000,
             failure: 60_000,
           }),
           fn: async () => {
             try {
-              const res = await consensus.exec(['df', '-PB1', '/chain'])
-              if (res.exitCode !== 0 || typeof res.stdout !== 'string')
-                throw new Error('df failed')
-              const usage = parseDfBytes(res.stdout)
-              if (!usage) throw new Error('Unable to parse df output')
+              let usage: { total: number; available: number } | null = null
+              if (config.storage === LOCAL_STORAGE_ID) {
+                usage = await localDiskUsage()
+              } else {
+                const res = await consensus.exec(['df', '-PB1', '/chain'], {
+                  timeout: 15_000,
+                })
+                if (res.exitCode !== 0 || typeof res.stdout !== 'string')
+                  throw new Error('df failed')
+                usage = parseDfBytes(res.stdout)
+              }
+              if (!usage) throw new Error('Unable to read disk usage')
+              lastDiskUsage = usage
               const free = formatStorageSize(usage.available)
               const total = formatStorageSize(usage.total)
               if (usage.available < DISK_CRITICAL_FREE_BYTES) {
@@ -762,6 +792,14 @@ export const main = sdk.setupMain(async ({ effects }) =>
                 message: i18n('${free} free of ${total}', { free, total }),
               }
             } catch {
+              if (lastDiskUsage) {
+                const free = formatStorageSize(lastDiskUsage.available)
+                const total = formatStorageSize(lastDiskUsage.total)
+                return {
+                  result: 'success',
+                  message: i18n('${free} free of ${total}', { free, total }),
+                }
+              }
               return {
                 result: 'loading',
                 message: i18n('Checking disk space'),
